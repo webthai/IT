@@ -35,16 +35,18 @@ const ASSET_TYPES = {
   EDC: {
     label: 'EDC (เครื่องรูดบัตร)',
     fields: [
-      { key: 'TID', label: 'TID' }
+      { key: 'TID', label: 'TID' },
+      { key: 'Serial Number', label: 'Serial Number (S/N)' }
     ],
-    columns: ['TID']
+    columns: ['TID', 'Serial Number']
   },
   Pinpad: {
     label: 'Pinpad',
     fields: [
+      { key: 'TID', label: 'TID' },
       { key: 'Serial Number', label: 'Serial Number (S/N)' }
     ],
-    columns: ['Serial Number']
+    columns: ['TID', 'Serial Number']
   },
   PrinterServer: {
     label: 'Printer / Print Server',
