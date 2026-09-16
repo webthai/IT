@@ -22,6 +22,11 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbwZvOGA6_o2E2-0-fX3_SkA
 const BRANCHES = ['อโศก', 'ปิ่นเกล้า', 'อุดร'];
 const LOC_FIELDS = ['อาคาร', 'ชั้น', 'แผนก', 'ตำแหน่งย่อย'];
 
+// login ครั้งเดียวต่อเครื่อง — เก็บสถานะไว้ใน localStorage (เป็นแค่ด่านกันคนทั่วไปเปิดเจอ
+// ไม่ใช่ระบบยืนยันตัวตนจริง เพราะ user/pass ฝังอยู่ในไฟล์นี้ที่ใครก็เปิดดูได้ เหมือนกับ PIN เดิม)
+const LOGIN_USER = 'meen';
+const LOGIN_PASS = '5340';
+
 const ASSET_TYPES = {
   IPPhone: {
     label: 'IP Phone',
@@ -422,8 +427,29 @@ function showToast(msg) {
   toastTimer = setTimeout(() => t.classList.add('hidden'), 2500);
 }
 
-// ---------------- WIRE UP ----------------
-document.addEventListener('DOMContentLoaded', () => {
+// ---------------- LOGIN ----------------
+function handleLogin(e) {
+  e.preventDefault();
+  const u = $('loginUser').value.trim();
+  const p = $('loginPass').value;
+  if (u === LOGIN_USER && p === LOGIN_PASS) {
+    localStorage.setItem('it.auth', '1');
+    document.documentElement.classList.add('authed');
+    initApp();
+  } else {
+    $('loginError').textContent = 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง';
+    $('loginError').classList.remove('hidden');
+    $('loginPass').value = '';
+    $('loginPass').focus();
+  }
+}
+
+// ---------------- APP INIT (รันหลัง login ผ่านแล้วเท่านั้น) ----------------
+let appStarted = false;
+function initApp() {
+  if (appStarted) return; // กันรันซ้ำถ้า login ผ่าน handler แล้วเครื่องนี้ authed อยู่แล้วด้วย
+  appStarted = true;
+
   initBranchSelects();
   initTabs();
   initAssetTypeTabs();
@@ -449,4 +475,10 @@ document.addEventListener('DOMContentLoaded', () => {
     setStatus('แสดงข้อมูลที่บันทึกไว้ (' + state.updated + ') กำลังตรวจสอบข้อมูลใหม่…');
   }
   loadAll(true);
+}
+
+// ---------------- WIRE UP ----------------
+document.addEventListener('DOMContentLoaded', () => {
+  $('loginForm').addEventListener('submit', handleLogin);
+  if (localStorage.getItem('it.auth') === '1') initApp();
 });
