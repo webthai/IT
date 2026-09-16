@@ -4,7 +4,7 @@
    ========================================================= */
 
 // ⚠️ แก้ URL นี้เป็น Web App URL ที่ได้จากการ Deploy Google Apps Script (Code.gs)
-const API_URL = 'https://script.google.com/macros/s/AKfycbwZvOGA6_o2E2-0-fX3_SkASsyaPmhnMRiWydv8wiqFu58UGQH9mvh690YQMGT3FQVc/exec';
+const API_URL = 'https://script.google.com/macros/s/XXXXXXXXXXXXXXXXXXXXXXXX/exec';
 
 const BRANCHES = ['อโศก', 'ปิ่นเกล้า', 'อุดร'];
 
@@ -24,9 +24,10 @@ const ASSET_TYPES = {
       { key: 'ธนาคาร', label: 'ธนาคารเจ้าของเครื่อง' },
       { key: 'TID', label: 'TID' },
       { key: 'MID', label: 'MID' },
-      { key: 'IP/SIM', label: 'IP Address / SIM' }
+      { key: 'IP/SIM', label: 'IP Address / SIM' },
+      { key: 'Pinpad ที่เชื่อมต่อ', label: 'Pinpad ที่เชื่อมต่อ (Serial Number)', linkedSuggest: { type: 'Pinpad', field: 'Serial Number' } }
     ],
-    columns: ['ธนาคาร', 'TID', 'MID']
+    columns: ['ธนาคาร', 'TID', 'Pinpad ที่เชื่อมต่อ']
   },
   Pinpad: {
     label: 'Pinpad',
@@ -36,24 +37,28 @@ const ASSET_TYPES = {
     ],
     columns: ['Serial Number', 'PC การเงินที่เชื่อมต่อ']
   },
-  Printer: {
-    label: 'Printer',
+  PrinterServer: {
+    label: 'Printer / Print Server',
     fields: [
+      { key: 'Hostname', label: 'Hostname (เครื่อง Print Server)' },
       { key: 'IP Address', label: 'IP Address' },
+      { key: 'MAC Address', label: 'MAC Address' },
       { key: 'ชื่อ Share Printer', label: 'ชื่อ Share Printer' },
-      { key: 'รุ่นตลับหมึก', label: 'รุ่นตลับหมึกพิมพ์' }
+      { key: 'รุ่นตลับหมึก', label: 'รุ่นตลับหมึกพิมพ์' },
+      { key: 'เลข AnyDesk', label: 'เลข AnyDesk (AnyDesk ID)' }
     ],
-    columns: ['IP Address', 'ชื่อ Share Printer', 'รุ่นตลับหมึก']
+    columns: ['Hostname', 'IP Address', 'ชื่อ Share Printer']
   },
-  ServerPC: {
-    label: 'Server / PC',
+  PC: {
+    label: 'PC',
     fields: [
       { key: 'Hostname', label: 'Hostname' },
       { key: 'IP Address', label: 'IP Address' },
       { key: 'MAC Address', label: 'MAC Address' },
+      { key: 'เลข AnyDesk', label: 'เลข AnyDesk (AnyDesk ID)' },
       { key: 'สเปกเครื่อง', label: 'สเปกเครื่อง' }
     ],
-    columns: ['Hostname', 'IP Address', 'MAC Address']
+    columns: ['Hostname', 'IP Address', 'เลข AnyDesk']
   }
 };
 
@@ -312,13 +317,19 @@ function openForm(row) {
 
   // dynamic fields
   const dyn = $('dynamicFields');
-  dyn.innerHTML = cfg.fields.map((f) => `
+  dyn.innerHTML = cfg.fields.map((f, idx) => `
     <div class="${f.key === 'สเปกเครื่อง' ? 'col-span-2' : ''}">
       <label class="text-xs font-semibold text-slate-500">${f.label}</label>
-      <input data-field="${f.key}" value="${row ? (row[f.key] || '') : ''}"
+      <input data-field="${f.key}" value="${row ? (row[f.key] || '') : ''}"${f.linkedSuggest ? ` list="dl_link_${idx}"` : ''}
         class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+      ${f.linkedSuggest ? `<datalist id="dl_link_${idx}"></datalist>` : ''}
     </div>
   `).join('');
+  cfg.fields.forEach((f, idx) => {
+    if (!f.linkedSuggest) return;
+    apiGet({ action: 'fieldValues', type: f.linkedSuggest.type, field: f.linkedSuggest.field })
+      .then((values) => fillDatalist(`dl_link_${idx}`, values));
+  });
 
   $('formModal').classList.remove('hidden');
   $('formModal').classList.add('flex');
