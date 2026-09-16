@@ -1,12 +1,26 @@
 /* =========================================================
    IT Asset, Phone Directory & Dashboard System
-   app.js — ต้องแนบไฟล์นี้ฉบับเต็มทุกครั้งที่มีการแก้ไข
+   app.js v2 — ต้องแนบไฟล์นี้ฉบับเต็มทุกครั้งที่มีการแก้ไข
+
+   สิ่งที่เปลี่ยนจาก v1:
+   1. ยิง API ครั้งเดียวตอนเปิดเว็บ (action=bootstrap) แทนการยิงทุกครั้งที่
+      เปลี่ยนแท็บ / เปลี่ยนสาขา / สลับประเภทอุปกรณ์
+   2. ค้นหา กรองสาขา และ autocomplete ทำในเบราว์เซอร์ทั้งหมด ไม่แตะ server
+   3. เก็บสำเนาไว้ใน localStorage แล้ววาดหน้าจอทันทีตอนเปิด ค่อยอัปเดตเบื้องหลัง
+      (เปิดดูได้แม้เน็ตหลุด)
+   4. ไม่เรียก action 'fieldValues' อีกต่อไป — Serial Number ของ Pinpad คำนวณจาก
+      ข้อมูลที่มีอยู่แล้วใน bootstrap แทน (Code.gs ฝั่ง backend ยังรองรับ action นี้อยู่
+      เผื่อมีที่อื่นเรียกใช้ แต่ฝั่งนี้ไม่จำเป็นต้องยิงขอเพิ่มอีกรอบ)
+   5. ยอด "สำรอง" บนการ์ดแดชบอร์ดกรองตามสาขาที่เลือก (เดิมเป็นยอดรวมทุกสาขา)
    ========================================================= */
 
-// ⚠️ แก้ URL นี้เป็น Web App URL ที่ได้จากการ Deploy Google Apps Script (Code.gs)
+// ⚠️ ใส่ Web App URL ที่ได้จากการ Deploy Google Apps Script (Code.gs) ตรงนี้
+// (นี่คือ URL ที่ deploy อยู่ปัจจุบัน — ถ้า deploy เวอร์ชันใหม่ทับของเดิมด้วย
+//  "Manage deployments > New version" ไม่ต้องแก้บรรทัดนี้ เพราะ URL เดิมยังใช้ได้)
 const API_URL = 'https://script.google.com/macros/s/AKfycbwZvOGA6_o2E2-0-fX3_SkASsyaPmhnMRiWydv8wiqFu58UGQH9mvh690YQMGT3FQVc/exec';
 
 const BRANCHES = ['อโศก', 'ปิ่นเกล้า', 'อุดร'];
+const LOC_FIELDS = ['อาคาร', 'ชั้น', 'แผนก', 'ตำแหน่งย่อย'];
 
 const ASSET_TYPES = {
   IPPhone: {
@@ -63,24 +77,21 @@ const ASSET_TYPES = {
 };
 
 // ---------------- STATE ----------------
-let state = {
-  branch: '',
+const state = {
+  branch: localStorage.getItem('it.branch') || '',
   tab: 'dashboard',
   assetType: 'IPPhone',
-  cache: {},      // { [type]: rows[] }
-  suggestCache: {}, // { [type]: {อาคาร:[], ชั้น:[], แผนก:[], ตำแหน่งย่อย:[]} }
-  editing: null   // row being edited, or null when adding
+  db: {},          // { [type]: rows[] } — ข้อมูลทั้งหมดเก็บไว้ในเครื่อง
+  updated: '',
+  editing: null
 };
 
-// ---------------- DOM SHORTCUTS ----------------
 const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v == null ? '' : v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const isSpare = (r) => r['สำรอง'] === true || r['สำรอง'] === 'TRUE' || r['สำรอง'] === 'true';
+const locOf = (r, withBranch) => [withBranch ? r['สาขา'] : null, r['อาคาร'], r['ชั้น'], r['แผนก'], r['ตำแหน่งย่อย']].filter(Boolean).join(' / ');
 
 // ---------------- API ----------------
-async function apiGet(params) {
-  const url = `${API_URL}?${new URLSearchParams(params).toString()}`;
-  const res = await fetch(url);
-  return res.json();
-}
 async function apiPost(body) {
   const res = await fetch(API_URL, {
     method: 'POST',
@@ -90,18 +101,75 @@ async function apiPost(body) {
   return res.json();
 }
 
+function setStatus(text, kind) {
+  $('status').className = 'status' + (kind ? ' ' + kind : '');
+  $('statusText').textContent = text;
+}
+
+function hasData() {
+  return Object.keys(state.db).length > 0;
+}
+
+/** โหลดข้อมูลทั้งหมดในคำขอเดียว */
+async function loadAll(silent) {
+  if (!silent) setStatus(hasData() ? 'กำลังตรวจสอบข้อมูลใหม่…' : 'กำลังโหลดข้อมูล…');
+  $('btnReload').disabled = true;
+  try {
+    const res = await fetch(API_URL + '?action=bootstrap&t=' + Date.now());
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+    state.db = json.data;
+    state.updated = json.updated || '';
+    localStorage.setItem('it.db', JSON.stringify({ data: state.db, updated: state.updated }));
+    renderAll();
+    setStatus('ข้อมูลล่าสุด ' + state.updated, 'live');
+  } catch (err) {
+    setStatus(hasData()
+      ? 'เชื่อมต่อไม่ได้ กำลังแสดงข้อมูลที่บันทึกไว้ในเครื่อง (' + state.updated + ')'
+      : 'โหลดข้อมูลไม่สำเร็จ: ' + err.message, 'err');
+  } finally {
+    $('btnReload').disabled = false;
+  }
+}
+
+function loadFromCache() {
+  try {
+    const raw = localStorage.getItem('it.db');
+    if (!raw) return false;
+    const c = JSON.parse(raw);
+    if (!c || !c.data) return false;
+    state.db = c.data;
+    state.updated = c.updated || '';
+    return true;
+  } catch (e) { return false; }
+}
+
+// ---------------- อ่านข้อมูลจาก state ----------------
+function rowsOf(type) {
+  const rows = state.db[type] || [];
+  return state.branch ? rows.filter((r) => r['สาขา'] === state.branch) : rows;
+}
+
+/** ค่าที่เคยกรอกไว้ ใช้ทำ autocomplete — คำนวณจากข้อมูลในเครื่อง ไม่ยิง server */
+function suggestFor(type, field) {
+  const set = new Set();
+  (state.db[type] || []).forEach((r) => { if (r[field]) set.add(String(r[field])); });
+  return [...set].sort();
+}
+
 // ---------------- INIT ----------------
 function initBranchSelects() {
-  const branchSelect = $('branchSelect');
-  const fBranch = $('f_branch');
+  const sel = $('branchSelect');
+  const fb = $('f_branch');
   BRANCHES.forEach((b) => {
-    branchSelect.insertAdjacentHTML('beforeend', `<option value="${b}">${b}</option>`);
-    fBranch.insertAdjacentHTML('beforeend', `<option value="${b}">${b}</option>`);
+    sel.insertAdjacentHTML('beforeend', `<option value="${esc(b)}">${esc(b)}</option>`);
+    fb.insertAdjacentHTML('beforeend', `<option value="${esc(b)}">${esc(b)}</option>`);
   });
-  branchSelect.addEventListener('change', () => {
-    state.branch = branchSelect.value;
-    state.cache = {}; // ล้างแคชเมื่อเปลี่ยนสาขา
-    refreshCurrentTab();
+  sel.value = state.branch;
+  sel.addEventListener('change', () => {
+    state.branch = sel.value;
+    localStorage.setItem('it.branch', state.branch);
+    renderAll();   // แค่วาดใหม่ ไม่ยิง API
   });
 }
 
@@ -115,190 +183,121 @@ function switchTab(tab) {
   state.tab = tab;
   document.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   ['dashboard', 'directory', 'assets'].forEach((t) => {
-    $(`tab-${t}`).classList.toggle('hidden', t !== tab);
+    $('tab-' + t).classList.toggle('hidden', t !== tab);
   });
-  refreshCurrentTab();
-}
-
-function refreshCurrentTab() {
-  if (state.tab === 'dashboard') loadDashboard();
-  if (state.tab === 'directory') loadDirectory();
-  if (state.tab === 'assets') loadAssetTab();
 }
 
 function initAssetTypeTabs() {
-  const wrap = $('assetTypeTabs');
-  Object.entries(ASSET_TYPES).forEach(([key, cfg]) => {
-    const btn = document.createElement('button');
-    btn.textContent = cfg.label;
-    btn.dataset.type = key;
-    btn.className = 'asset-type-btn whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-semibold border ' +
-      (key === state.assetType ? 'bg-teal-650 text-white border-teal-650' : 'bg-white text-slate-600 border-slate-300');
-    btn.addEventListener('click', () => {
-      state.assetType = key;
-      document.querySelectorAll('.asset-type-btn').forEach((b) => {
-        const active = b.dataset.type === key;
-        b.className = 'asset-type-btn whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-semibold border ' +
-          (active ? 'bg-teal-650 text-white border-teal-650' : 'bg-white text-slate-600 border-slate-300');
-      });
-      loadAssetTab();
-    });
-    wrap.appendChild(btn);
+  $('assetTypeTabs').innerHTML = Object.entries(ASSET_TYPES).map(([key, cfg]) =>
+    `<button type="button" data-type="${key}" aria-pressed="${key === state.assetType}">${esc(cfg.label)}</button>`
+  ).join('');
+  $('assetTypeTabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-type]');
+    if (!btn) return;
+    state.assetType = btn.dataset.type;
+    document.querySelectorAll('#assetTypeTabs button').forEach((b) =>
+      b.setAttribute('aria-pressed', b.dataset.type === state.assetType));
+    $('assetSearch').value = '';
+    renderAssets();   // แค่วาดใหม่ ไม่ยิง API
   });
 }
 
-// ---------------- DASHBOARD ----------------
-async function loadDashboard() {
-  const [summary, spareList] = await Promise.all([
-    apiGet({ action: 'summary' }),
-    apiGet({ action: 'spare', branch: state.branch })
-  ]);
-  renderSummaryCards(summary);
-  renderSpareTable(spareList);
+// ---------------- RENDER ----------------
+function renderAll() {
+  renderDashboard();
+  renderDirectory();
+  renderAssets();
 }
 
-function renderSummaryCards(summary) {
-  const wrap = $('summaryCards');
-  wrap.innerHTML = '';
-  if (summary.error) { wrap.innerHTML = `<p class="col-span-full text-red-600 text-sm">${summary.error}</p>`; return; }
-  Object.entries(ASSET_TYPES).forEach(([key, cfg]) => {
-    const count = state.branch ? (summary.byBranch[state.branch]?.[key] ?? 0) : (summary.total[key] ?? 0);
-    const spare = summary.spare[key] ?? 0;
-    wrap.insertAdjacentHTML('beforeend', `
-      <div class="bg-white rounded-xl border border-slate-200 p-4">
-        <p class="text-xs font-semibold text-slate-500">${cfg.label}</p>
-        <p class="text-2xl font-extrabold mt-1 mono">${count}</p>
-        <p class="text-[11px] text-slate-400 mt-0.5">สำรอง ${spare} เครื่อง</p>
-      </div>
-    `);
+function renderDashboard() {
+  $('summaryCards').innerHTML = Object.entries(ASSET_TYPES).map(([key, cfg]) => {
+    const rows = rowsOf(key);
+    const spare = rows.filter(isSpare).length;
+    return `<div class="card">
+      <p class="lbl">${esc(cfg.label)}</p>
+      <p class="num mono">${rows.length}</p>
+      <p class="sub">สำรอง ${spare} เครื่อง</p>
+    </div>`;
+  }).join('');
+
+  const list = [];
+  Object.keys(ASSET_TYPES).forEach((type) => {
+    rowsOf(type).filter(isSpare).forEach((r) => list.push({ type, r }));
   });
-}
 
-function renderSpareTable(list) {
-  const body = $('spareTableBody');
-  const empty = $('spareEmpty');
-  $('spareCount').textContent = list.length ? `${list.length} รายการ` : '';
-  body.innerHTML = '';
-  empty.classList.toggle('hidden', list.length > 0);
-  list.forEach((r) => {
-    const cfg = ASSET_TYPES[r['ประเภท']];
+  $('spareCount').textContent = list.length ? list.length + ' รายการ' : '';
+  $('spareEmpty').classList.toggle('hidden', list.length > 0);
+  $('spareTableBody').innerHTML = list.map(({ type, r }) => {
+    const cfg = ASSET_TYPES[type];
     const detail = cfg.columns.map((c) => r[c]).filter(Boolean).join(' · ');
-    const loc = [r['อาคาร'], r['ชั้น'], r['แผนก'], r['ตำแหน่งย่อย']].filter(Boolean).join(' / ');
-    body.insertAdjacentHTML('beforeend', `
-      <tr>
-        <td class="px-4 py-2.5 font-semibold">${cfg.label}</td>
-        <td class="px-4 py-2.5">${r['สาขา'] || '-'}</td>
-        <td class="px-4 py-2.5 text-slate-500">${loc || '-'}</td>
-        <td class="px-4 py-2.5 text-slate-500 mono">${detail || '-'}</td>
-      </tr>
-    `);
-  });
+    return `<tr>
+      <td style="font-weight:600">${esc(cfg.label)}</td>
+      <td>${esc(r['สาขา'] || '-')}</td>
+      <td class="loc">${esc(locOf(r, false) || '-')}</td>
+      <td class="loc mono">${esc(detail || '-')}</td>
+    </tr>`;
+  }).join('');
 }
 
-// ---------------- DIRECTORY ----------------
-let directoryData = [];
-async function loadDirectory() {
-  directoryData = await apiGet({ action: 'list', type: 'IPPhone', branch: state.branch });
-  renderDirectory(directoryData);
-}
-function renderDirectory(list) {
-  const wrap = $('directoryList');
-  const empty = $('directoryEmpty');
-  wrap.innerHTML = '';
-  empty.classList.toggle('hidden', list.length > 0);
-  list.forEach((r) => {
-    const loc = [r['อาคาร'], r['ชั้น'], r['แผนก'], r['ตำแหน่งย่อย']].filter(Boolean).join(' / ');
-    wrap.insertAdjacentHTML('beforeend', `
-      <div class="bg-white rounded-xl border border-slate-200 p-3.5 flex items-center justify-between gap-3">
-        <div class="min-w-0">
-          <p class="font-bold text-sm">${r['แผนก'] || 'ไม่ระบุแผนก'} <span class="text-slate-400 font-normal">· ${r['สาขา'] || '-'}</span></p>
-          <p class="text-xs text-slate-400 truncate">${loc || '-'}</p>
-        </div>
-        <div class="text-right shrink-0">
-          <p class="mono font-extrabold text-teal-650 text-lg leading-none">${r['เบอร์ภายใน'] || '-'}</p>
-          ${r['สายตรง'] ? `<p class="mono text-xs text-slate-400 mt-1">สายตรง ${r['สายตรง']}</p>` : ''}
-        </div>
+function renderDirectory() {
+  const q = $('directorySearch').value.trim().toLowerCase();
+  let rows = rowsOf('IPPhone');
+  if (q) {
+    const keys = ['เบอร์ภายใน', 'สายตรง', 'แผนก', 'ตำแหน่งย่อย', 'อาคาร', 'ชั้น'];
+    rows = rows.filter((r) => keys.some((k) => String(r[k] || '').toLowerCase().includes(q)));
+  }
+  $('directoryEmpty').classList.toggle('hidden', rows.length > 0);
+  $('directoryList').innerHTML = rows.map((r) => `
+    <div class="dir-item">
+      <div class="who">
+        <b>${esc(r['แผนก'] || 'ไม่ระบุแผนก')} <span>· ${esc(r['สาขา'] || '-')}</span></b>
+        <small>${esc(locOf(r, false) || '-')}</small>
       </div>
-    `);
-  });
-}
-function filterDirectory(q) {
-  q = q.trim().toLowerCase();
-  if (!q) return renderDirectory(directoryData);
-  const filtered = directoryData.filter((r) =>
-    ['เบอร์ภายใน', 'สายตรง', 'แผนก', 'ตำแหน่งย่อย', 'อาคาร', 'ชั้น'].some((f) =>
-      (r[f] || '').toString().toLowerCase().includes(q))
-  );
-  renderDirectory(filtered);
+      <div class="ext">
+        <b class="mono">${esc(r['เบอร์ภายใน'] || '-')}</b>
+        ${r['สายตรง'] ? `<small class="mono">สายตรง ${esc(r['สายตรง'])}</small>` : ''}
+      </div>
+    </div>`).join('');
 }
 
-// ---------------- ASSETS ----------------
-let assetData = [];
-async function loadAssetTab() {
-  $('assetEmpty').classList.add('hidden');
-  $('assetLoading').classList.remove('hidden');
-  $('assetTableBody').innerHTML = '';
-  renderAssetTableHead();
-
-  const [rows, suggest] = await Promise.all([
-    apiGet({ action: 'list', type: state.assetType, branch: state.branch }),
-    apiGet({ action: 'suggest', type: state.assetType })
-  ]);
-  assetData = Array.isArray(rows) ? rows : [];
-  state.suggestCache[state.assetType] = suggest;
-  $('assetLoading').classList.add('hidden');
-  renderAssetTable(assetData);
-}
-
-function renderAssetTableHead() {
+function renderAssets() {
   const cfg = ASSET_TYPES[state.assetType];
-  const head = $('assetTableHead');
-  head.innerHTML = `
-    <th class="text-left font-semibold px-4 py-2">ตำแหน่ง</th>
-    ${cfg.columns.map((c) => `<th class="text-left font-semibold px-4 py-2">${c}</th>`).join('')}
-    <th class="text-left font-semibold px-4 py-2">สำรอง</th>
-    <th class="px-4 py-2"></th>
-  `;
+  $('assetTableHead').innerHTML =
+    '<th>ตำแหน่ง</th>' + cfg.columns.map((c) => `<th>${esc(c)}</th>`).join('') + '<th>สำรอง</th><th></th>';
+
+  const q = $('assetSearch').value.trim().toLowerCase();
+  let rows = rowsOf(state.assetType);
+  if (q) {
+    const keys = ['สาขา'].concat(LOC_FIELDS, cfg.fields.map((f) => f.key), ['หมายเหตุ']);
+    rows = rows.filter((r) => keys.some((k) => String(r[k] || '').toLowerCase().includes(q)));
+  }
+
+  $('assetEmpty').classList.toggle('hidden', rows.length > 0);
+  $('assetEmpty').textContent = q ? 'ไม่พบรายการที่ค้นหา' : 'ยังไม่มีข้อมูล';
+  $('assetTableBody').innerHTML = rows.map((r) => `
+    <tr data-id="${esc(r['ID'])}">
+      <td class="loc">${esc(locOf(r, true) || '-')}</td>
+      ${cfg.columns.map((c) => `<td class="mono">${esc(r[c] || '-')}</td>`).join('')}
+      <td>${isSpare(r) ? '<span class="spare-mark">● สำรอง</span>' : ''}</td>
+      <td class="chev">›</td>
+    </tr>`).join('');
 }
 
-function renderAssetTable(list) {
-  const cfg = ASSET_TYPES[state.assetType];
-  const body = $('assetTableBody');
-  body.innerHTML = '';
-  $('assetEmpty').classList.toggle('hidden', list.length > 0);
-  list.forEach((r) => {
-    const loc = [r['สาขา'], r['อาคาร'], r['ชั้น'], r['แผนก'], r['ตำแหน่งย่อย']].filter(Boolean).join(' / ');
-    const isSpare = r['สำรอง'] === true || r['สำรอง'] === 'TRUE';
-    body.insertAdjacentHTML('beforeend', `
-      <tr class="hover:bg-slate-50 cursor-pointer" data-id="${r['ID']}">
-        <td class="px-4 py-2.5 text-slate-500 max-w-[220px] truncate">${loc || '-'}</td>
-        ${cfg.columns.map((c) => `<td class="px-4 py-2.5 mono">${r[c] || '-'}</td>`).join('')}
-        <td class="px-4 py-2.5">${isSpare ? '<span class="text-teal-650 font-semibold text-xs">● สำรอง</span>' : ''}</td>
-        <td class="px-4 py-2.5 text-right text-slate-300">›</td>
-      </tr>
-    `);
-  });
-  body.querySelectorAll('tr').forEach((tr) => {
-    tr.addEventListener('click', () => openForm(assetData.find((r) => r['ID'] === tr.dataset.id)));
-  });
+// ---------------- FORM ----------------
+function fillDatalist(id, values) {
+  const el = $(id);
+  if (el) el.innerHTML = (values || []).map((v) => `<option value="${esc(v)}">`).join('');
 }
 
-function filterAssets(q) {
-  q = q.trim().toLowerCase();
-  const cfg = ASSET_TYPES[state.assetType];
-  if (!q) return renderAssetTable(assetData);
-  const fields = ['สาขา', 'อาคาร', 'ชั้น', 'แผนก', 'ตำแหน่งย่อย', ...cfg.columns];
-  renderAssetTable(assetData.filter((r) => fields.some((f) => (r[f] || '').toString().toLowerCase().includes(q))));
-}
-
-// ---------------- FORM MODAL ----------------
 function openForm(row) {
   state.editing = row || null;
   const cfg = ASSET_TYPES[state.assetType];
+
   $('formTitle').textContent = row ? `แก้ไข · ${cfg.label}` : `เพิ่มรายการ · ${cfg.label}`;
   $('btnDeleteItem').classList.toggle('hidden', !row);
   $('formError').classList.add('hidden');
   $('itemForm').reset();
+
   $('f_id').value = row ? row['ID'] : '';
   $('f_branch').value = row ? row['สาขา'] : (state.branch || BRANCHES[0]);
   $('f_building').value = row ? row['อาคาร'] || '' : '';
@@ -306,89 +305,114 @@ function openForm(row) {
   $('f_dept').value = row ? row['แผนก'] || '' : '';
   $('f_sub').value = row ? row['ตำแหน่งย่อย'] || '' : '';
   $('f_note').value = row ? row['หมายเหตุ'] || '' : '';
-  $('f_spare').checked = row ? (row['สำรอง'] === true || row['สำรอง'] === 'TRUE') : false;
+  $('f_spare').checked = row ? isSpare(row) : false;
 
-  // datalists
-  const sug = state.suggestCache[state.assetType] || {};
-  fillDatalist('dl_building', sug['อาคาร']);
-  fillDatalist('dl_floor', sug['ชั้น']);
-  fillDatalist('dl_dept', sug['แผนก']);
-  fillDatalist('dl_sub', sug['ตำแหน่งย่อย']);
+  // autocomplete — รวมค่าที่เคยกรอกจากทุกประเภทอุปกรณ์ ไม่ต้องยิง server
+  LOC_FIELDS.forEach((f) => {
+    const set = new Set();
+    Object.keys(ASSET_TYPES).forEach((t) => suggestFor(t, f).forEach((v) => set.add(v)));
+    fillDatalist({ 'อาคาร': 'dl_building', 'ชั้น': 'dl_floor', 'แผนก': 'dl_dept', 'ตำแหน่งย่อย': 'dl_sub' }[f], [...set].sort());
+  });
 
-  // dynamic fields
-  const dyn = $('dynamicFields');
-  dyn.innerHTML = cfg.fields.map((f, idx) => `
-    <div class="${f.key === 'สเปกเครื่อง' ? 'col-span-2' : ''}">
-      <label class="text-xs font-semibold text-slate-500">${f.label}</label>
-      <input data-field="${f.key}" value="${row ? (row[f.key] || '') : ''}"${f.linkedSuggest ? ` list="dl_link_${idx}"` : ''}
-        class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+  $('dynamicFields').innerHTML = cfg.fields.map((f, idx) => `
+    <div class="f${f.key === 'สเปกเครื่อง' || f.key === 'ชื่อ Share Printer' ? ' full' : ''}">
+      <label for="dyn_${idx}">${esc(f.label)}</label>
+      <input id="dyn_${idx}" data-field="${esc(f.key)}" value="${esc(row ? row[f.key] || '' : '')}"
+        autocomplete="off"${f.linkedSuggest ? ` list="dl_link_${idx}"` : ''}>
       ${f.linkedSuggest ? `<datalist id="dl_link_${idx}"></datalist>` : ''}
-    </div>
-  `).join('');
+    </div>`).join('');
+
+  // ช่องที่อ้างอิงข้อมูลจากประเภทอื่น เช่น Serial Number ของ Pinpad
   cfg.fields.forEach((f, idx) => {
-    if (!f.linkedSuggest) return;
-    apiGet({ action: 'fieldValues', type: f.linkedSuggest.type, field: f.linkedSuggest.field })
-      .then((values) => fillDatalist(`dl_link_${idx}`, values));
+    if (f.linkedSuggest) fillDatalist(`dl_link_${idx}`, suggestFor(f.linkedSuggest.type, f.linkedSuggest.field));
   });
 
   $('formModal').classList.remove('hidden');
-  $('formModal').classList.add('flex');
-}
-
-function fillDatalist(id, values) {
-  $(id).innerHTML = (values || []).map((v) => `<option value="${v}">`).join('');
 }
 
 function closeForm() {
   $('formModal').classList.add('hidden');
-  $('formModal').classList.remove('flex');
   state.editing = null;
-}
-
-async function submitForm(e) {
-  e.preventDefault();
-  const cfg = ASSET_TYPES[state.assetType];
-  const data = {
-    ID: $('f_id').value || undefined,
-    'สาขา': $('f_branch').value,
-    'อาคาร': $('f_building').value,
-    'ชั้น': $('f_floor').value,
-    'แผนก': $('f_dept').value,
-    'ตำแหน่งย่อย': $('f_sub').value,
-    'สำรอง': $('f_spare').checked,
-    'หมายเหตุ': $('f_note').value
-  };
-  $('dynamicFields').querySelectorAll('[data-field]').forEach((inp) => { data[inp.dataset.field] = inp.value; });
-
-  const pin = $('f_pin').value;
-  setFormBusy(true);
-  const res = await apiPost({ action: 'save', type: state.assetType, pin, data });
-  setFormBusy(false);
-
-  if (res.error) return showFormError(res.error);
-  closeForm();
-  showToast(state.editing ? 'แก้ไขข้อมูลเรียบร้อย' : 'เพิ่มรายการเรียบร้อย');
-  loadAssetTab();
-}
-
-async function deleteCurrentItem() {
-  if (!state.editing) return;
-  const pin = prompt('กรอกรหัส PIN เพื่อยืนยันการลบ');
-  if (pin === null) return;
-  const res = await apiPost({ action: 'delete', type: state.assetType, pin, id: state.editing['ID'] });
-  if (res.error) return showToast(res.error);
-  closeForm();
-  showToast('ลบรายการเรียบร้อย');
-  loadAssetTab();
 }
 
 function setFormBusy(busy) {
   $('btnSaveForm').disabled = busy;
   $('btnSaveForm').textContent = busy ? 'กำลังบันทึก...' : 'บันทึก';
 }
+
 function showFormError(msg) {
   $('formError').textContent = msg;
   $('formError').classList.remove('hidden');
+}
+
+async function submitForm(e) {
+  e.preventDefault();
+  const cfg = ASSET_TYPES[state.assetType];
+  const data = {
+    'สาขา': $('f_branch').value,
+    'อาคาร': $('f_building').value.trim(),
+    'ชั้น': $('f_floor').value.trim(),
+    'แผนก': $('f_dept').value.trim(),
+    'ตำแหน่งย่อย': $('f_sub').value.trim(),
+    'สำรอง': $('f_spare').checked,
+    'หมายเหตุ': $('f_note').value.trim()
+  };
+  if ($('f_id').value) data['ID'] = $('f_id').value;
+  $('dynamicFields').querySelectorAll('[data-field]').forEach((inp) => {
+    data[inp.dataset.field] = inp.value.trim();
+  });
+
+  const wasEditing = !!state.editing;
+  setFormBusy(true);
+  let res;
+  try {
+    res = await apiPost({ action: 'save', type: state.assetType, pin: $('f_pin').value, data });
+  } catch (err) {
+    setFormBusy(false);
+    return showFormError('บันทึกไม่สำเร็จ: ' + err.message);
+  }
+  setFormBusy(false);
+  if (res.error) return showFormError(res.error);
+
+  applyLocal(data, res.id);   // อัปเดตหน้าจอทันที ไม่ต้องรอโหลดใหม่ทั้งก้อน
+  closeForm();
+  showToast(wasEditing ? 'แก้ไขข้อมูลเรียบร้อย' : 'เพิ่มรายการเรียบร้อย');
+}
+
+async function deleteCurrentItem() {
+  if (!state.editing) return;
+  const id = state.editing['ID'];
+  const pin = prompt('กรอกรหัส PIN เพื่อยืนยันการลบ');
+  if (pin === null) return;
+
+  let res;
+  try {
+    res = await apiPost({ action: 'delete', type: state.assetType, pin, id });
+  } catch (err) {
+    return showToast('ลบไม่สำเร็จ: ' + err.message);
+  }
+  if (res.error) return showToast(res.error);
+
+  state.db[state.assetType] = (state.db[state.assetType] || []).filter((r) => r['ID'] !== id);
+  persist();
+  closeForm();
+  renderAll();
+  showToast('ลบรายการเรียบร้อย');
+}
+
+function applyLocal(data, id) {
+  data['ID'] = id;
+  data['อัปเดตล่าสุด'] = new Date().toLocaleString('th-TH');
+  const list = state.db[state.assetType] || (state.db[state.assetType] = []);
+  const i = list.findIndex((r) => r['ID'] === id);
+  if (i >= 0) list[i] = data; else list.push(data);
+  persist();
+  renderAll();
+}
+
+function persist() {
+  state.updated = new Date().toLocaleString('th-TH');
+  localStorage.setItem('it.db', JSON.stringify({ data: state.db, updated: state.updated }));
 }
 
 // ---------------- TOAST ----------------
@@ -406,15 +430,26 @@ document.addEventListener('DOMContentLoaded', () => {
   initBranchSelects();
   initTabs();
   initAssetTypeTabs();
-  renderAssetTableHead();
 
-  $('directorySearch').addEventListener('input', (e) => filterDirectory(e.target.value));
-  $('assetSearch').addEventListener('input', (e) => filterAssets(e.target.value));
+  $('directorySearch').addEventListener('input', renderDirectory);
+  $('assetSearch').addEventListener('input', renderAssets);
   $('btnAddNew').addEventListener('click', () => openForm(null));
+  $('btnReload').addEventListener('click', () => loadAll());
   $('formClose').addEventListener('click', closeForm);
   $('btnCancelForm').addEventListener('click', closeForm);
   $('itemForm').addEventListener('submit', submitForm);
   $('btnDeleteItem').addEventListener('click', deleteCurrentItem);
+  $('formModal').addEventListener('click', (e) => { if (e.target === $('formModal')) closeForm(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeForm(); });
+  $('assetTableBody').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-id]');
+    if (tr) openForm((state.db[state.assetType] || []).find((r) => r['ID'] === tr.dataset.id));
+  });
 
-  loadDashboard();
+  // แสดงข้อมูลที่เก็บไว้ในเครื่องก่อน แล้วค่อยดึงของใหม่เบื้องหลัง
+  if (loadFromCache()) {
+    renderAll();
+    setStatus('แสดงข้อมูลที่บันทึกไว้ (' + state.updated + ') กำลังตรวจสอบข้อมูลใหม่…');
+  }
+  loadAll(true);
 });
