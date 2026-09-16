@@ -35,21 +35,16 @@ const ASSET_TYPES = {
   EDC: {
     label: 'EDC (เครื่องรูดบัตร)',
     fields: [
-      { key: 'ธนาคาร', label: 'ธนาคารเจ้าของเครื่อง' },
-      { key: 'TID', label: 'TID' },
-      { key: 'MID', label: 'MID' },
-      { key: 'IP/SIM', label: 'IP Address / SIM' },
-      { key: 'Pinpad ที่เชื่อมต่อ', label: 'Pinpad ที่เชื่อมต่อ (Serial Number)', linkedSuggest: { type: 'Pinpad', field: 'Serial Number' } }
+      { key: 'TID', label: 'TID' }
     ],
-    columns: ['ธนาคาร', 'TID', 'Pinpad ที่เชื่อมต่อ']
+    columns: ['TID']
   },
   Pinpad: {
     label: 'Pinpad',
     fields: [
-      { key: 'Serial Number', label: 'Serial Number (S/N)' },
-      { key: 'PC การเงินที่เชื่อมต่อ', label: 'PC การเงินที่เชื่อมต่อ' }
+      { key: 'Serial Number', label: 'Serial Number (S/N)' }
     ],
-    columns: ['Serial Number', 'PC การเงินที่เชื่อมต่อ']
+    columns: ['Serial Number']
   },
   PrinterServer: {
     label: 'Printer / Print Server',
