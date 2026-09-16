@@ -4,7 +4,7 @@
    ========================================================= */
 
 // ⚠️ แก้ URL นี้เป็น Web App URL ที่ได้จากการ Deploy Google Apps Script (Code.gs)
-const API_URL = 'https://script.google.com/macros/s/XXXXXXXXXXXXXXXXXXXXXXXX/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbwZvOGA6_o2E2-0-fX3_SkASsyaPmhnMRiWydv8wiqFu58UGQH9mvh690YQMGT3FQVc/exec';
 
 const BRANCHES = ['อโศก', 'ปิ่นเกล้า', 'อุดร'];
 
