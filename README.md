@@ -32,7 +32,7 @@ README.md    → เอกสารฉบับนี้
 2. เปิด **Extensions > Apps Script**
 3. ลบโค้ดเดิมทั้งหมด แล้ววางเนื้อหาไฟล์ `Code.gs` ลงไป
 4. เลือกฟังก์ชัน `setupSheets` จาก dropdown ด้านบน (ข้าง Debug) แล้วกด **Run** ครั้งเดียว
-   - ระบบจะสร้างชีตทั้งหมด (IPPhone, EDC, Pinpad, Printer, ServerPC, Log) พร้อมหัวตารางให้อัตโนมัติ
+   - ระบบจะสร้างชีตทั้งหมด (IPPhone, EDC, Pinpad, PrinterServer, PC, Log) พร้อมหัวตารางให้อัตโนมัติ
    - ครั้งแรกที่ Run จะมีป๊อปอัพขอสิทธิ์ (Authorize) ให้กด Review permissions > อนุญาต
 5. กด **Deploy > New deployment**
    - Select type: **Web app**
@@ -65,15 +65,16 @@ const API_URL = 'https://script.google.com/macros/s/XXXXXXXXXXXXXXXXXXXXXXXX/exe
 | ชีต | คอลัมน์เฉพาะ |
 |---|---|
 | **IPPhone** | เบอร์ภายใน, IP Address, สายตรง |
-| **EDC** | ธนาคาร, TID, MID, IP/SIM |
+| **EDC** | ธนาคาร, TID, MID, IP/SIM, Pinpad ที่เชื่อมต่อ (เลือกจาก Serial Number ของ Pinpad ที่มีอยู่) |
 | **Pinpad** | Serial Number, PC การเงินที่เชื่อมต่อ |
-| **Printer** | IP Address, ชื่อ Share Printer, รุ่นตลับหมึก |
-| **ServerPC** | Hostname, IP Address, MAC Address, สเปกเครื่อง |
+| **PrinterServer** | Hostname, IP Address, MAC Address, ชื่อ Share Printer, รุ่นตลับหมึก, เลข AnyDesk (เครื่อง Printer/Print Server รวมเป็นประเภทเดียวกัน) |
+| **PC** | Hostname, IP Address, MAC Address, เลข AnyDesk, สเปกเครื่อง |
 | **Log** | เวลา, การกระทำ, ประเภท, ID รายการ, รายละเอียด (บันทึกอัตโนมัติทุกครั้งที่ เพิ่ม/แก้ไข/ลบ) |
 
 - `ID` เป็นรหัสสุ่ม 8 หลัก สร้างอัตโนมัติตอนเพิ่มรายการใหม่ (ห้ามแก้มือใน Sheet เพราะระบบใช้อ้างอิงตอนแก้ไข/ลบ)
 - `สำรอง` เป็นค่า TRUE/FALSE ใช้แทนสถานะ "อุปกรณ์สำรองพร้อมใช้งาน" (ยังไม่ทำระบบสถานะเต็มรูปแบบตามที่ตกลงกันไว้ — เพิ่มภายหลังได้)
 - `อัปเดตล่าสุด` บันทึกเป็นเวลาประเทศไทย (Asia/Bangkok) เสมอ ทั้งตอนเพิ่มและแก้ไข
+- **หมายเหตุการย้ายโครงสร้าง**: เดิมมีชีต `Printer` และ `ServerPC` แยกกัน ตอนนี้รวม/แยกใหม่เป็น `PrinterServer` (รวม Printer กับ Server เป็นประเภทเดียว) และ `PC` (แยกออกมาต่างหาก) — ถ้าชีต `Printer`/`ServerPC` เดิมยังว่างอยู่ ให้ลบทิ้งได้เลยแล้วรัน `setupSheets()` เพื่อสร้างชีตใหม่ 2 อันนี้ขึ้นมาแทน แต่ถ้ามีข้อมูลกรอกไว้แล้วในชีตเดิม ให้คัดลอกข้อมูลไปวางในชีตใหม่ตามคอลัมน์ที่ตรงกันด้วยตัวเองก่อนลบชีตเดิม
 
 ---
 
