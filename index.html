@@ -182,6 +182,40 @@ html.authed #loginScreen{display:none}
 .login-card .sub{margin:0 0 20px;font-size:12.5px;color:var(--faint)}
 .login-card .f{text-align:left;margin-bottom:12px}
 .login-card #loginError{color:var(--danger);font-size:12.5px;margin:2px 0 12px}
+
+/* ---------- admin ---------- */
+.admin-sub{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:14px}
+.admin-sub button{
+  background:var(--surface);border:1px solid var(--line-strong);border-radius:999px;
+  padding:8px 14px;font-size:13px;font-weight:600;color:var(--muted);white-space:nowrap;cursor:pointer;min-height:38px;
+}
+.admin-sub button[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:#fff}
+.admin-pane{display:none}
+.admin-pane.active{display:block}
+.list-row{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:11px 14px;border-top:1px solid #f1f5f9;font-size:14px;
+}
+.list-row:first-child{border-top:0}
+.list-row .meta{color:var(--faint);font-size:12px}
+.list-row .acts{display:flex;gap:4px;flex:none}
+.list-row .acts button{
+  background:none;border:1px solid var(--line-strong);border-radius:6px;
+  font-size:12px;padding:5px 9px;cursor:pointer;color:var(--muted);
+}
+.list-row .acts button.danger{color:var(--danger);border-color:#fecaca}
+.inline-add{display:flex;gap:8px;padding:12px 14px;border-top:1px solid #f1f5f9}
+.inline-add input{flex:1}
+.field-group{border-top:1px solid #f1f5f9}
+.field-group-head{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:12px 14px;cursor:pointer;font-weight:700;font-size:14px;
+}
+.field-group-body{padding:0 14px 12px}
+.field-group-body.collapsed{display:none}
+.type-badge{font-size:11px;color:var(--faint);font-weight:400}
+.mini-form{background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:10px}
+.mini-form .grid2{margin-bottom:10px}
 </style>
 </head>
 <body>
@@ -221,6 +255,7 @@ html.authed #loginScreen{display:none}
     <button class="tab-btn active" data-tab="dashboard">แดชบอร์ด</button>
     <button class="tab-btn" data-tab="directory">ค้นหาเบอร์โทร</button>
     <button class="tab-btn" data-tab="assets">จัดการอุปกรณ์</button>
+    <button class="tab-btn" data-tab="admin">Admin</button>
   </nav>
 </header>
 
@@ -276,6 +311,85 @@ html.authed #loginScreen{display:none}
     </div>
   </section>
 
+  <!-- ============ Admin ============ -->
+  <section id="tab-admin" class="hidden">
+    <div class="admin-sub" id="adminSubTabs">
+      <button type="button" data-pane="branches" aria-pressed="true">สาขา</button>
+      <button type="button" data-pane="settings">ตั้งค่า PIN/Login</button>
+      <button type="button" data-pane="logs">Log</button>
+      <button type="button" data-pane="schema">ประเภท &amp; ฟิลด์</button>
+    </div>
+
+    <!-- สาขา -->
+    <div class="admin-pane active" id="pane-branches">
+      <div class="panel">
+        <div class="panel-head"><h2>รายชื่อสาขา</h2></div>
+        <div id="branchList"></div>
+        <div class="inline-add">
+          <input id="newBranchName" placeholder="ชื่อสาขาใหม่">
+          <button id="btnAddBranch" type="button" class="btn">+ เพิ่มสาขา</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ตั้งค่า PIN/Login -->
+    <div class="admin-pane" id="pane-settings">
+      <div class="panel" style="padding:16px">
+        <form id="settingsForm">
+          <div class="f" style="margin-bottom:12px">
+            <label for="s_pin">PIN ใหม่ (เว้นว่าง = ไม่เปลี่ยน)</label>
+            <input id="s_pin" inputmode="numeric" autocomplete="off">
+          </div>
+          <div class="f" style="margin-bottom:12px">
+            <label for="s_user">ชื่อผู้ใช้ login ใหม่ (เว้นว่าง = ไม่เปลี่ยน)</label>
+            <input id="s_user" autocomplete="off">
+          </div>
+          <div class="f" style="margin-bottom:12px">
+            <label for="s_pass">รหัสผ่าน login ใหม่ (เว้นว่าง = ไม่เปลี่ยน)</label>
+            <input id="s_pass" type="password" autocomplete="off">
+          </div>
+          <div class="f" style="margin-bottom:12px">
+            <label for="s_currentPin">PIN ปัจจุบัน (ยืนยัน) *</label>
+            <input id="s_currentPin" type="password" inputmode="numeric" required autocomplete="off">
+          </div>
+          <p id="settingsError" class="hidden" style="color:var(--danger);font-size:12.5px;margin-bottom:10px"></p>
+          <button type="submit" class="btn">บันทึกการตั้งค่า</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="admin-pane" id="pane-logs">
+      <div class="row" style="flex-wrap:wrap">
+        <input id="logFrom" type="date" style="flex:1;min-width:130px" class="search">
+        <input id="logTo" type="date" style="flex:1;min-width:130px" class="search">
+        <select id="logType" class="search" style="flex:1;min-width:130px"><option value="">ทุกประเภท</option></select>
+        <button id="btnLogSearch" type="button" class="btn">ค้นหา</button>
+      </div>
+      <div class="panel">
+        <div class="scroll">
+          <table>
+            <thead><tr><th>เวลา</th><th>การกระทำ</th><th>ประเภท</th><th>ID</th><th>รายละเอียด</th></tr></thead>
+            <tbody id="logTableBody"></tbody>
+          </table>
+        </div>
+        <p id="logEmpty" class="msg hidden">ไม่พบรายการ</p>
+      </div>
+    </div>
+
+    <!-- ประเภท & ฟิลด์ -->
+    <div class="admin-pane" id="pane-schema">
+      <div class="panel">
+        <div class="panel-head"><h2>ประเภทอุปกรณ์</h2></div>
+        <div id="schemaTypeList"></div>
+        <div class="inline-add" style="flex-wrap:wrap">
+          <input id="newTypeKey" placeholder="รหัส (อังกฤษ ไม่เว้นวรรค เช่น CCTV)" style="flex:1;min-width:160px">
+          <input id="newTypeLabel" placeholder="ชื่อที่แสดง เช่น กล้องวงจรปิด" style="flex:1;min-width:160px">
+          <button id="btnAddType" type="button" class="btn">+ เพิ่มประเภท</button>
+        </div>
+      </div>
+    </div>
+  </section>
 </main>
 </div>
 
@@ -324,7 +438,7 @@ html.authed #loginScreen{display:none}
 
       <div class="divider f pin">
         <label for="f_pin">รหัส PIN ยืนยัน *</label>
-        <input id="f_pin" type="password" inputmode="numeric" maxlength="4" required autocomplete="off">
+        <input id="f_pin" type="password" inputmode="numeric" maxlength="12" required autocomplete="off">
       </div>
       <p id="formError" class="hidden"></p>
     </form>
