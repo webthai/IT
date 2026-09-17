@@ -1,14 +1,18 @@
 /* =========================================================
    IT Asset, Phone Directory & Dashboard System
-   app.js v3 — ต้องแนบไฟล์นี้ฉบับเต็มทุกครั้งที่มีการแก้ไข
+   app.js v3.1 — ต้องแนบไฟล์นี้ฉบับเต็มทุกครั้งที่มีการแก้ไข
 
-   เปลี่ยนจาก v2:
-   1. ไม่มี BRANCHES / ASSET_TYPES hardcode อีกต่อไป — ดึงจาก bootstrap ทั้งหมด
-      (สาขา, ประเภทอุปกรณ์, ฟิลด์ มาจากชีต Config/SchemaTypes/SchemaFields ฝั่ง backend)
-   2. login ตรวจฝั่ง server (action=login) ไม่ฝัง user/password ไว้ในไฟล์นี้อีกต่อไป
-   3. เพิ่มแท็บ Admin: จัดการสาขา, ตั้งค่า PIN/Login, ดู Log ย้อนหลัง (กรองวันที่/ประเภท),
-      จัดการประเภทอุปกรณ์และฟิลด์ (เพิ่ม/แก้ไข/ลบจริง)
-   4. ฟิลด์รองรับ 3 ชนิด: text / dropdown (มีตัวเลือก) / date
+   เปลี่ยนจาก v3:
+   1. เพิ่มปุ่ม "ออกจากระบบ" ในหัว header — ลบ localStorage 'it.auth',
+      เอา class 'authed' ออกจาก <html> เพื่อกลับไปหน้า login ทันที (ไม่ reload หน้า)
+      รีเซ็ตสถานะ Admin session (adminUnlocked/adminPin) ด้วย เพื่อไม่ให้กลับเข้า Admin
+      ได้เองโดยไม่ผ่าน PIN gate อีกครั้งหลัง login ใหม่
+      *ไม่รีเซ็ต* ตัวนับ PIN ผิด/เวลาล็อก เพื่อไม่ให้ logout แล้ว login ใหม่ใช้เลี่ยง lockout ได้
+   2. เพิ่ม PIN lockout บน Admin PIN keypad — กรอกผิดครบ 5 ครั้งติดกัน ล็อกปุ่มกด 30 วินาที
+      พร้อมนับถอยหลังโชว์ในข้อความ error เดิม เก็บสถานะใน state (JS memory เท่านั้น
+      ไม่ persist ข้าม reload หน้า — ยอมรับข้อจำกัดนี้ตามที่ผู้ใช้ตกลงไว้)
+   ทุกอย่างอื่น (API, bootstrap, dashboard/directory/assets, schema, log, branch/settings)
+   เหมือนไฟล์เดิมทุกตัวอักษร ไม่มีการเปลี่ยนพฤติกรรมอื่นใด
    ========================================================= */
 
 const API_URL = 'https://script.google.com/macros/s/AKfycbwZvOGA6_o2E2-0-fX3_SkASsyaPmhnMRiWydv8wiqFu58UGQH9mvh690YQMGT3FQVc/exec';
@@ -24,6 +28,9 @@ const state = {
   adminUnlocked: false,
   adminPin: '',
   pinBuffer: '',
+  pinAttempts: 0,      // จำนวนครั้งที่กรอก PIN ผิดติดกัน (memory เท่านั้น รีเซ็ตเมื่อ reload หน้า)
+  pinLockUntil: 0,     // timestamp (ms) ที่จะปลดล็อก keypad ได้ — 0 = ไม่ได้ล็อกอยู่
+  pinLockTimer: null,  // interval id สำหรับนับถอยหลังบนจอ
   branches: [],
   schema: { types: [], fieldsByType: {} },
   db: {},
@@ -144,8 +151,19 @@ function switchTab(tab) {
   if (tab === 'admin') {
     $('adminGate').classList.toggle('hidden', state.adminUnlocked);
     $('adminContent').classList.toggle('hidden', !state.adminUnlocked);
-    if (state.adminUnlocked) renderAdmin();
-    else { state.pinBuffer = ''; renderPinDots(); $('adminGateError').classList.add('hidden'); }
+    if (state.adminUnlocked) {
+      renderAdmin();
+    } else {
+      state.pinBuffer = '';
+      renderPinDots();
+      if (isPinLocked()) {
+        // ยังล็อกอยู่ (เช่นสลับแท็บออกแล้วกลับมาระหว่างนับถอยหลัง) — โชว์สถานะล็อกต่อ ไม่ล้าง error
+        setKeypadDisabled(true);
+        showPinLockCountdown();
+      } else {
+        $('adminGateError').classList.add('hidden');
+      }
+    }
   }
 }
 
@@ -390,7 +408,50 @@ function renderPinDots() {
     `<span class="dot${i < n ? ' filled' : ''}"></span>`).join('');
 }
 
+// ---- PIN lockout (5 ครั้งผิด → ล็อก 30 วินาที, memory เท่านั้น) ----
+function isPinLocked() {
+  return state.pinLockUntil > Date.now();
+}
+
+function setKeypadDisabled(disabled) {
+  document.querySelectorAll('#pinKeypad button').forEach((b) => {
+    b.disabled = disabled;
+    b.style.opacity = disabled ? '.4' : '';
+    b.style.cursor = disabled ? 'not-allowed' : '';
+  });
+  const submitBtn = $('pinSubmit');
+  submitBtn.disabled = disabled;
+  submitBtn.style.opacity = disabled ? '.55' : '';
+  submitBtn.style.cursor = disabled ? 'not-allowed' : '';
+}
+
+function showPinLockCountdown() {
+  const remain = Math.max(0, Math.ceil((state.pinLockUntil - Date.now()) / 1000));
+  if (remain <= 0) {
+    clearInterval(state.pinLockTimer);
+    state.pinLockTimer = null;
+    state.pinLockUntil = 0;
+    state.pinAttempts = 0;
+    setKeypadDisabled(false);
+    $('adminGateError').classList.add('hidden');
+    return;
+  }
+  $('adminGateError').textContent = `กรอกผิดครบ 5 ครั้ง กรุณารออีก ${remain} วินาที`;
+  $('adminGateError').classList.remove('hidden');
+}
+
+function lockPinKeypad() {
+  state.pinLockUntil = Date.now() + 30000; // ล็อก 30 วินาที
+  state.pinBuffer = '';
+  renderPinDots();
+  setKeypadDisabled(true);
+  showPinLockCountdown();
+  clearInterval(state.pinLockTimer);
+  state.pinLockTimer = setInterval(showPinLockCountdown, 1000);
+}
+
 async function submitAdminPin() {
+  if (isPinLocked()) return; // กันเผื่อ event หลุดมาได้ระหว่างล็อก
   $('adminGateError').classList.add('hidden');
   const pin = state.pinBuffer;
   if (!pin) return;
@@ -407,22 +468,30 @@ async function submitAdminPin() {
   }
   btn.disabled = false; btn.textContent = 'เข้าสู่ Admin';
   if (res.ok) {
+    state.pinAttempts = 0;
     state.adminUnlocked = true;
     state.adminPin = pin;
     $('adminGate').classList.add('hidden');
     $('adminContent').classList.remove('hidden');
     renderAdmin();
   } else {
-    $('adminGateError').textContent = res.error || 'PIN ไม่ถูกต้อง';
-    $('adminGateError').classList.remove('hidden');
+    state.pinAttempts++;
     state.pinBuffer = '';
     renderPinDots();
+    if (state.pinAttempts >= 5) {
+      lockPinKeypad();
+    } else {
+      const left = 5 - state.pinAttempts;
+      $('adminGateError').textContent = (res.error || 'PIN ไม่ถูกต้อง') + ` (เหลืออีก ${left} ครั้งก่อนถูกล็อกชั่วคราว)`;
+      $('adminGateError').classList.remove('hidden');
+    }
   }
 }
 
 function initAdmin() {
   renderPinDots();
   $('pinKeypad').addEventListener('click', (e) => {
+    if (isPinLocked()) return;
     const btn = e.target.closest('button[data-k]');
     if (!btn) return;
     const k = btn.dataset.k;
@@ -669,7 +738,7 @@ function renderAdminSchema() {
 }
 
 // =========================================================
-// LOGIN
+// LOGIN / LOGOUT
 // =========================================================
 async function handleLogin(e) {
   e.preventDefault();
@@ -700,6 +769,21 @@ async function handleLogin(e) {
   }
 }
 
+function handleLogout() {
+  localStorage.removeItem('it.auth');
+  document.documentElement.classList.remove('authed');
+  // รีเซ็ต session ของ Admin กันเข้าถึงได้เองโดยไม่ผ่าน PIN gate อีกครั้งหลัง login ใหม่
+  // (ตั้งใจ *ไม่* รีเซ็ต pinAttempts/pinLockUntil เพื่อไม่ให้ logout แล้ว login ใหม่ใช้เลี่ยง lockout ได้)
+  state.adminUnlocked = false;
+  state.adminPin = '';
+  state.pinBuffer = '';
+  if ($('adminGate') && $('adminContent')) {
+    $('adminGate').classList.remove('hidden');
+    $('adminContent').classList.add('hidden');
+  }
+  $('loginPass').value = '';
+}
+
 // ---------------- APP INIT (รันหลัง login ผ่านแล้วเท่านั้น) ----------------
 let appStarted = false;
 function initApp() {
@@ -711,6 +795,7 @@ function initApp() {
   initAssetTypeTabs();
   initAdmin();
 
+  $('btnLogout').addEventListener('click', handleLogout);
   $('directorySearch').addEventListener('input', renderDirectory);
   $('assetSearch').addEventListener('input', renderAssets);
   $('btnAddNew').addEventListener('click', () => openForm(null));
