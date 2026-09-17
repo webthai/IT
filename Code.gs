@@ -12,12 +12,20 @@
  *   - login ตรวจฝั่ง server แล้ว (action=login) ไม่ฝัง user/password ไว้ใน app.js อีกต่อไป
  *   - เพิ่ม action=logs ดู Log ย้อนหลัง กรองตามวันที่/ประเภทได้
  *
+ * แก้ไขจากไฟล์เดิม (v3 ที่ผู้ใช้ deploy ไว้) — จุดที่แก้มี 2 ที่ เท่านั้น เพื่อแก้บั๊ก
+ * "PIN ถูกแล้วแต่ login ไม่ผ่าน":
+ *   1. getConfig() — บังคับ String(...) ทุกค่าที่อ่านจากชีต Config ตั้งแต่ต้นทาง
+ *      กันไม่ให้ Google Sheets ตีความ pin/loginPass เป็น number แล้วเทียบกับ string ที่ส่งมาจากหน้าเว็บไม่ตรงกัน
+ *   2. checkLogin() — เทียบ user/pass ด้วย String(...) ทั้งสองฝั่ง เหมือนที่ checkPin() ทำอยู่แล้ว
+ * โค้ดส่วนอื่นทั้งหมดเหมือนไฟล์เดิมทุกตัวอักษร ไม่มีการเปลี่ยนพฤติกรรมอื่นใด
+ *
  * DEPLOY / MIGRATE จาก v2:
  * 1. วางไฟล์นี้ทับ Code.gs เดิม (Save)
  * 2. รัน setupSheets() ครั้งเดียว — จะสร้างชีต Config / SchemaTypes / SchemaFields ให้ใหม่
  *    พร้อม seed ค่าเริ่มต้นจากของเดิมทั้งหมด (5 ประเภท, 3 สาขา, PIN ใหม่ 05032540, login เดิม)
  *    ชีตข้อมูลอุปกรณ์เดิม (IPPhone, EDC, ...) ที่มีอยู่แล้วจะไม่ถูกแตะต้อง ข้อมูลเดิมปลอดภัย
- * 3. Deploy > Manage deployments > New version
+ * 3. Deploy > Manage deployments > (ไอคอนดินสอ) > Version: New version > Deploy
+ *    ใช้วิธีนี้แทน New deployment เพื่อให้ URL เดิมใช้ต่อได้ ไม่ต้องแก้ app.js
  * 4. อัปโหลด index.html และ app.js เวอร์ชันใหม่ทับของเดิม (ต้องคู่กัน ห้ามใช้ Code.gs v3 กับ app.js v2)
  */
 
@@ -84,6 +92,7 @@ function setupSheets() {
   if (!cfgSheet) {
     cfgSheet = ss.insertSheet('Config');
     cfgSheet.getRange(1, 1, 1, 2).setValues([['Key', 'Value']]);
+    cfgSheet.getRange('B:B').setNumberFormat('@'); // กัน Sheets ตัดเลข 0 นำหน้าออกจาก PIN
     cfgSheet.appendRow(['pin', DEFAULT_PIN]);
     cfgSheet.appendRow(['loginUser', DEFAULT_LOGIN_USER]);
     cfgSheet.appendRow(['loginPass', DEFAULT_LOGIN_PASS]);
@@ -165,15 +174,17 @@ function clearAllCache() {
 }
 
 // ---------- CONFIG (สาขา / PIN / login) ----------
+// แก้ไข: บังคับ String(...) ทุกค่า กัน Google Sheets ตีความ pin/loginPass เป็น number
+// แล้วเทียบกับ string ที่ส่งมาจากหน้าเว็บไม่ตรงกัน (สาเหตุที่ login เดิมพัง)
 function getConfig() {
   return cachedGeneric('cfg', function () {
     var sheet = getSpreadsheet().getSheetByName('Config');
     var map = {};
     sheetToObjects(sheet).forEach(function (r) { map[r['Key']] = r['Value']; });
     return {
-      pin: map.pin || DEFAULT_PIN,
-      loginUser: map.loginUser || DEFAULT_LOGIN_USER,
-      loginPass: map.loginPass || DEFAULT_LOGIN_PASS,
+      pin: String(map.pin || DEFAULT_PIN),
+      loginUser: String(map.loginUser || DEFAULT_LOGIN_USER),
+      loginPass: String(map.loginPass || DEFAULT_LOGIN_PASS),
       branches: map.branches ? JSON.parse(map.branches) : DEFAULT_BRANCHES.slice()
     };
   });
@@ -183,9 +194,14 @@ function setConfigValue(key, value) {
   var sheet = getSpreadsheet().getSheetByName('Config');
   var values = sheet.getDataRange().getValues();
   for (var i = 1; i < values.length; i++) {
-    if (values[i][0] === key) { sheet.getRange(i + 1, 2).setValue(value); clearCacheKey('cfg'); return; }
+    if (values[i][0] === key) {
+      sheet.getRange(i + 1, 2).setNumberFormat('@').setValue(String(value));
+      clearCacheKey('cfg');
+      return;
+    }
   }
-  sheet.appendRow([key, value]);
+  var row = sheet.getLastRow() + 1;
+  sheet.getRange(row, 1, 1, 2).setNumberFormat('@').setValues([[key, String(value)]]);
   clearCacheKey('cfg');
 }
 
@@ -245,6 +261,7 @@ function doPost(e) {
 
     if (!checkPin(body.pin)) return jsonOut({ error: 'PIN ไม่ถูกต้อง' });
 
+    if (body.action === 'checkPin') return jsonOut({ ok: true });
     if (body.action === 'save') return jsonOut(saveRow(body.type, body.data));
     if (body.action === 'delete') return jsonOut(deleteRow(body.type, body.id));
     if (body.action === 'saveBranch') return jsonOut(saveBranch(body.mode, body.name, body.newName));
@@ -257,9 +274,11 @@ function doPost(e) {
   }
 }
 
+// แก้ไข: เทียบ user/pass ด้วย String(...) ทั้งสองฝั่ง เหมือน checkPin()
+// เดิมใช้ === ตรงๆ ทำให้ "5340" (string จากหน้าเว็บ) ไม่เท่ากับ 5340 (number จากชีต) แม้ค่าตรงกัน
 function checkLogin(user, pass) {
   var cfg = getConfig();
-  if (user === cfg.loginUser && pass === cfg.loginPass) return { ok: true };
+  if (String(user) === String(cfg.loginUser) && String(pass) === String(cfg.loginPass)) return { ok: true };
   return { error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' };
 }
 
