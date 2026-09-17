@@ -313,6 +313,22 @@ html.authed #loginScreen{display:none}
 
   <!-- ============ Admin ============ -->
   <section id="tab-admin" class="hidden">
+    <div id="adminGate">
+      <div class="login-card" style="margin:40px auto;max-width:340px">
+        <div class="mark mono" style="width:44px;height:44px;font-size:16px;margin:0 auto 14px">IT</div>
+        <h2>เข้าสู่ Admin</h2>
+        <p class="sub">กรอก PIN เพื่อเข้าใช้งาน (กรอกครั้งเดียว ไม่ต้องใส่ซ้ำระหว่างใช้งาน)</p>
+        <form id="adminGateForm">
+          <div class="f" style="margin-bottom:12px">
+            <label for="adminGatePin">PIN</label>
+            <input id="adminGatePin" type="password" inputmode="numeric" maxlength="12" required autocomplete="off">
+          </div>
+          <p id="adminGateError" class="hidden" style="color:var(--danger);font-size:12.5px;margin-bottom:10px"></p>
+          <button type="submit" class="btn" style="width:100%">เข้าสู่ Admin</button>
+        </form>
+      </div>
+    </div>
+    <div id="adminContent" class="hidden">
     <div class="admin-sub" id="adminSubTabs">
       <button type="button" data-pane="branches" aria-pressed="true">สาขา</button>
       <button type="button" data-pane="settings">ตั้งค่า PIN/Login</button>
@@ -347,10 +363,6 @@ html.authed #loginScreen{display:none}
           <div class="f" style="margin-bottom:12px">
             <label for="s_pass">รหัสผ่าน login ใหม่ (เว้นว่าง = ไม่เปลี่ยน)</label>
             <input id="s_pass" type="password" autocomplete="off">
-          </div>
-          <div class="f" style="margin-bottom:12px">
-            <label for="s_currentPin">PIN ปัจจุบัน (ยืนยัน) *</label>
-            <input id="s_currentPin" type="password" inputmode="numeric" required autocomplete="off">
           </div>
           <p id="settingsError" class="hidden" style="color:var(--danger);font-size:12.5px;margin-bottom:10px"></p>
           <button type="submit" class="btn">บันทึกการตั้งค่า</button>
@@ -388,6 +400,7 @@ html.authed #loginScreen{display:none}
           <button id="btnAddType" type="button" class="btn">+ เพิ่มประเภท</button>
         </div>
       </div>
+    </div>
     </div>
   </section>
 </main>

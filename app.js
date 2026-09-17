@@ -21,6 +21,8 @@ const state = {
   tab: 'dashboard',
   assetType: '',
   adminPane: 'branches',
+  adminUnlocked: false,
+  adminPin: '',
   branches: [],
   schema: { types: [], fieldsByType: {} },
   db: {},
@@ -138,7 +140,12 @@ function switchTab(tab) {
   state.tab = tab;
   document.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   ['dashboard', 'directory', 'assets', 'admin'].forEach((t) => $('tab-' + t).classList.toggle('hidden', t !== tab));
-  if (tab === 'admin') renderAdmin();
+  if (tab === 'admin') {
+    $('adminGate').classList.toggle('hidden', state.adminUnlocked);
+    $('adminContent').classList.toggle('hidden', !state.adminUnlocked);
+    if (state.adminUnlocked) renderAdmin();
+    else { $('adminGatePin').value = ''; $('adminGateError').classList.add('hidden'); $('adminGatePin').focus(); }
+  }
 }
 
 function renderAssetTypeTabs() {
@@ -377,6 +384,36 @@ function showToast(msg) {
 // ADMIN
 // =========================================================
 function initAdmin() {
+  $('adminGateForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('adminGateError').classList.add('hidden');
+    const pin = $('adminGatePin').value;
+    const btn = $('adminGateForm').querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = 'กำลังตรวจสอบ...';
+    let res;
+    try {
+      res = await apiPost({ action: 'checkPin', pin });
+    } catch (err) {
+      btn.disabled = false; btn.textContent = 'เข้าสู่ Admin';
+      $('adminGateError').textContent = 'เชื่อมต่อไม่ได้: ' + err.message;
+      $('adminGateError').classList.remove('hidden');
+      return;
+    }
+    btn.disabled = false; btn.textContent = 'เข้าสู่ Admin';
+    if (res.ok) {
+      state.adminUnlocked = true;
+      state.adminPin = pin;
+      $('adminGate').classList.add('hidden');
+      $('adminContent').classList.remove('hidden');
+      renderAdmin();
+    } else {
+      $('adminGateError').textContent = res.error || 'PIN ไม่ถูกต้อง';
+      $('adminGateError').classList.remove('hidden');
+      $('adminGatePin').value = '';
+      $('adminGatePin').focus();
+    }
+  });
+
   $('adminSubTabs').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-pane]');
     if (!btn) return;
@@ -389,9 +426,7 @@ function initAdmin() {
   $('btnAddBranch').addEventListener('click', async () => {
     const name = $('newBranchName').value.trim();
     if (!name) return;
-    const pin = prompt('กรอก PIN เพื่อยืนยัน');
-    if (pin === null) return;
-    const res = await apiPost({ action: 'saveBranch', pin, mode: 'add', name });
+    const res = await apiPost({ action: 'saveBranch', pin: state.adminPin, mode: 'add', name });
     if (res.error) return showToast(res.error);
     state.branches = res.branches;
     $('newBranchName').value = '';
@@ -404,12 +439,13 @@ function initAdmin() {
     $('settingsError').classList.add('hidden');
     const res = await apiPost({
       action: 'saveSettings',
-      pin: $('s_currentPin').value,
+      pin: state.adminPin,
       newPin: $('s_pin').value.trim(),
       newLoginUser: $('s_user').value.trim(),
       newLoginPass: $('s_pass').value.trim()
     });
     if (res.error) { $('settingsError').textContent = res.error; $('settingsError').classList.remove('hidden'); return; }
+    if ($('s_pin').value.trim()) state.adminPin = $('s_pin').value.trim(); // ถ้าเพิ่งเปลี่ยน PIN ให้ session นี้ใช้ค่าใหม่ต่อได้เลย
     $('settingsForm').reset();
     showToast('บันทึกการตั้งค่าเรียบร้อย');
   });
@@ -420,9 +456,7 @@ function initAdmin() {
     const key = $('newTypeKey').value.trim();
     const label = $('newTypeLabel').value.trim();
     if (!key || !label) return showToast('กรอกรหัสและชื่อประเภทให้ครบ');
-    const pin = prompt('กรอก PIN เพื่อยืนยัน');
-    if (pin === null) return;
-    const res = await apiPost({ action: 'saveSchemaType', pin, mode: 'add', key, label });
+    const res = await apiPost({ action: 'saveSchemaType', pin: state.adminPin, mode: 'add', key, label });
     if (res.error) return showToast(res.error);
     state.schema.types.push({ key, label });
     state.schema.fieldsByType[key] = [];
@@ -454,9 +488,7 @@ function renderAdminBranches() {
     const name = btn.closest('.list-row').dataset.branch;
     const newName = prompt('ชื่อสาขาใหม่', name);
     if (!newName || newName === name) return;
-    const pin = prompt('กรอก PIN เพื่อยืนยัน');
-    if (pin === null) return;
-    const res = await apiPost({ action: 'saveBranch', pin, mode: 'rename', name, newName });
+    const res = await apiPost({ action: 'saveBranch', pin: state.adminPin, mode: 'rename', name, newName });
     if (res.error) return showToast(res.error);
     state.branches = res.branches;
     persist(); renderBranchSelect(); renderAdminBranches();
@@ -466,9 +498,7 @@ function renderAdminBranches() {
   $('branchList').querySelectorAll('.del').forEach((btn) => btn.addEventListener('click', async () => {
     const name = btn.closest('.list-row').dataset.branch;
     if (!confirm(`ลบสาขา "${name}"? อุปกรณ์ที่เคยผูกกับสาขานี้จะยังมีชื่อสาขานี้ค้างอยู่ในข้อมูลเดิม แค่จะไม่มีให้เลือกอีก`)) return;
-    const pin = prompt('กรอก PIN เพื่อยืนยัน');
-    if (pin === null) return;
-    const res = await apiPost({ action: 'saveBranch', pin, mode: 'delete', name });
+    const res = await apiPost({ action: 'saveBranch', pin: state.adminPin, mode: 'delete', name });
     if (res.error) return showToast(res.error);
     state.branches = res.branches;
     persist(); renderBranchSelect(); renderAdminBranches();
@@ -565,9 +595,7 @@ function renderAdminSchema() {
     const cur = state.schema.types.find((t) => t.key === key);
     const label = prompt('ชื่อที่แสดงใหม่', cur.label);
     if (!label || label === cur.label) return;
-    const pin = prompt('กรอก PIN เพื่อยืนยัน');
-    if (pin === null) return;
-    const res = await apiPost({ action: 'saveSchemaType', pin, mode: 'rename', key, label });
+    const res = await apiPost({ action: 'saveSchemaType', pin: state.adminPin, mode: 'rename', key, label });
     if (res.error) return showToast(res.error);
     cur.label = label;
     persist(); renderAssetTypeTabs(); renderAdminSchema();
@@ -578,9 +606,7 @@ function renderAdminSchema() {
   $('schemaTypeList').querySelectorAll('.del-type').forEach((btn) => btn.addEventListener('click', async () => {
     const key = btn.closest('.field-group').dataset.type;
     if (!confirm(`ลบประเภท "${key}" ทั้งชีต? ข้อมูลอุปกรณ์ทั้งหมดในประเภทนี้จะหายถาวร ลบไม่ได้คืน`)) return;
-    const pin = prompt('กรอก PIN เพื่อยืนยัน (การลบนี้ถาวร)');
-    if (pin === null) return;
-    const res = await apiPost({ action: 'saveSchemaType', pin, mode: 'delete', key });
+    const res = await apiPost({ action: 'saveSchemaType', pin: state.adminPin, mode: 'delete', key });
     if (res.error) return showToast(res.error);
     state.schema.types = state.schema.types.filter((t) => t.key !== key);
     delete state.schema.fieldsByType[key];
@@ -595,9 +621,7 @@ function renderAdminSchema() {
     const typeKey = btn.closest('.field-group').dataset.type;
     const key = btn.closest('.list-row').dataset.field;
     if (!confirm(`ลบฟิลด์ "${key}"? ข้อมูลในคอลัมน์นี้ของทุกแถวจะหายถาวร ลบไม่ได้คืน`)) return;
-    const pin = prompt('กรอก PIN เพื่อยืนยัน (การลบนี้ถาวร)');
-    if (pin === null) return;
-    const res = await apiPost({ action: 'saveSchemaField', pin, mode: 'delete', typeKey, key });
+    const res = await apiPost({ action: 'saveSchemaField', pin: state.adminPin, mode: 'delete', typeKey, key });
     if (res.error) return showToast(res.error);
     state.schema.fieldsByType[typeKey] = (state.schema.fieldsByType[typeKey] || []).filter((f) => f.key !== key);
     persist(); renderAssets(); renderAdminSchema();
@@ -616,9 +640,7 @@ function renderAdminSchema() {
       ? form.querySelector('.nf-options').value.split(',').map((s) => s.trim()).filter(Boolean)
       : [];
     if (!key || !label) return showToast('กรอกรหัสและชื่อฟิลด์ให้ครบ');
-    const pin = prompt('กรอก PIN เพื่อยืนยัน');
-    if (pin === null) return;
-    const res = await apiPost({ action: 'saveSchemaField', pin, mode: 'add', typeKey, key, label, fieldType, options, showInTable: true });
+    const res = await apiPost({ action: 'saveSchemaField', pin: state.adminPin, mode: 'add', typeKey, key, label, fieldType, options, showInTable: true });
     if (res.error) return showToast(res.error);
     (state.schema.fieldsByType[typeKey] = state.schema.fieldsByType[typeKey] || []).push({ typeKey, key, label, type: fieldType, options, showInTable: true });
     persist(); renderAssets(); renderAdminSchema();
