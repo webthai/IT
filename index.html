@@ -216,6 +216,18 @@ html.authed #loginScreen{display:none}
 .type-badge{font-size:11px;color:var(--faint);font-weight:400}
 .mini-form{background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:10px}
 .mini-form .grid2{margin-bottom:10px}
+
+/* ---------- numeric keypad (admin PIN gate) ---------- */
+.pin-dots{display:flex;justify-content:center;gap:10px;margin:18px 0}
+.pin-dots .dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--line-strong);transition:background .1s,border-color .1s}
+.pin-dots .dot.filled{background:var(--teal);border-color:var(--teal)}
+.keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.keypad button{
+  padding:16px 0;font-size:19px;font-weight:700;border-radius:10px;
+  border:1px solid var(--line-strong);background:#fff;color:var(--ink);cursor:pointer;
+}
+.keypad button:active{background:#f1f5f9}
+.keypad button.keypad-alt{font-size:13px;font-weight:600;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -317,15 +329,24 @@ html.authed #loginScreen{display:none}
       <div class="login-card" style="margin:40px auto;max-width:340px">
         <div class="mark mono" style="width:44px;height:44px;font-size:16px;margin:0 auto 14px">IT</div>
         <h2>เข้าสู่ Admin</h2>
-        <p class="sub">กรอก PIN เพื่อเข้าใช้งาน (กรอกครั้งเดียว ไม่ต้องใส่ซ้ำระหว่างใช้งาน)</p>
-        <form id="adminGateForm">
-          <div class="f" style="margin-bottom:12px">
-            <label for="adminGatePin">PIN</label>
-            <input id="adminGatePin" type="password" inputmode="numeric" maxlength="12" required autocomplete="off">
-          </div>
-          <p id="adminGateError" class="hidden" style="color:var(--danger);font-size:12.5px;margin-bottom:10px"></p>
-          <button type="submit" class="btn" style="width:100%">เข้าสู่ Admin</button>
-        </form>
+        <p class="sub">กดตัวเลข PIN เพื่อเข้าใช้งาน (กรอกครั้งเดียว ไม่ต้องใส่ซ้ำระหว่างใช้งาน)</p>
+        <div class="pin-dots" id="pinDots"></div>
+        <div class="keypad" id="pinKeypad">
+          <button type="button" data-k="1">1</button>
+          <button type="button" data-k="2">2</button>
+          <button type="button" data-k="3">3</button>
+          <button type="button" data-k="4">4</button>
+          <button type="button" data-k="5">5</button>
+          <button type="button" data-k="6">6</button>
+          <button type="button" data-k="7">7</button>
+          <button type="button" data-k="8">8</button>
+          <button type="button" data-k="9">9</button>
+          <button type="button" data-k="clear" class="keypad-alt">ล้าง</button>
+          <button type="button" data-k="0">0</button>
+          <button type="button" data-k="back" class="keypad-alt">⌫</button>
+        </div>
+        <p id="adminGateError" class="hidden" style="color:var(--danger);font-size:12.5px;margin:12px 0 0"></p>
+        <button id="pinSubmit" type="button" class="btn" style="width:100%;margin-top:14px">เข้าสู่ Admin</button>
       </div>
     </div>
     <div id="adminContent" class="hidden">

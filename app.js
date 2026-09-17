@@ -23,6 +23,7 @@ const state = {
   adminPane: 'branches',
   adminUnlocked: false,
   adminPin: '',
+  pinBuffer: '',
   branches: [],
   schema: { types: [], fieldsByType: {} },
   db: {},
@@ -144,7 +145,7 @@ function switchTab(tab) {
     $('adminGate').classList.toggle('hidden', state.adminUnlocked);
     $('adminContent').classList.toggle('hidden', !state.adminUnlocked);
     if (state.adminUnlocked) renderAdmin();
-    else { $('adminGatePin').value = ''; $('adminGateError').classList.add('hidden'); $('adminGatePin').focus(); }
+    else { state.pinBuffer = ''; renderPinDots(); $('adminGateError').classList.add('hidden'); }
   }
 }
 
@@ -383,36 +384,55 @@ function showToast(msg) {
 // =========================================================
 // ADMIN
 // =========================================================
-function initAdmin() {
-  $('adminGateForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    $('adminGateError').classList.add('hidden');
-    const pin = $('adminGatePin').value;
-    const btn = $('adminGateForm').querySelector('button[type=submit]');
-    btn.disabled = true; btn.textContent = 'กำลังตรวจสอบ...';
-    let res;
-    try {
-      res = await apiPost({ action: 'checkPin', pin });
-    } catch (err) {
-      btn.disabled = false; btn.textContent = 'เข้าสู่ Admin';
-      $('adminGateError').textContent = 'เชื่อมต่อไม่ได้: ' + err.message;
-      $('adminGateError').classList.remove('hidden');
-      return;
-    }
+function renderPinDots() {
+  const n = state.pinBuffer.length;
+  $('pinDots').innerHTML = Array.from({ length: Math.max(n, 4) }, (_, i) =>
+    `<span class="dot${i < n ? ' filled' : ''}"></span>`).join('');
+}
+
+async function submitAdminPin() {
+  $('adminGateError').classList.add('hidden');
+  const pin = state.pinBuffer;
+  if (!pin) return;
+  const btn = $('pinSubmit');
+  btn.disabled = true; btn.textContent = 'กำลังตรวจสอบ...';
+  let res;
+  try {
+    res = await apiPost({ action: 'checkPin', pin });
+  } catch (err) {
     btn.disabled = false; btn.textContent = 'เข้าสู่ Admin';
-    if (res.ok) {
-      state.adminUnlocked = true;
-      state.adminPin = pin;
-      $('adminGate').classList.add('hidden');
-      $('adminContent').classList.remove('hidden');
-      renderAdmin();
-    } else {
-      $('adminGateError').textContent = res.error || 'PIN ไม่ถูกต้อง';
-      $('adminGateError').classList.remove('hidden');
-      $('adminGatePin').value = '';
-      $('adminGatePin').focus();
-    }
+    $('adminGateError').textContent = 'เชื่อมต่อไม่ได้: ' + err.message;
+    $('adminGateError').classList.remove('hidden');
+    return;
+  }
+  btn.disabled = false; btn.textContent = 'เข้าสู่ Admin';
+  if (res.ok) {
+    state.adminUnlocked = true;
+    state.adminPin = pin;
+    $('adminGate').classList.add('hidden');
+    $('adminContent').classList.remove('hidden');
+    renderAdmin();
+  } else {
+    $('adminGateError').textContent = res.error || 'PIN ไม่ถูกต้อง';
+    $('adminGateError').classList.remove('hidden');
+    state.pinBuffer = '';
+    renderPinDots();
+  }
+}
+
+function initAdmin() {
+  renderPinDots();
+  $('pinKeypad').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-k]');
+    if (!btn) return;
+    const k = btn.dataset.k;
+    $('adminGateError').classList.add('hidden');
+    if (k === 'back') state.pinBuffer = state.pinBuffer.slice(0, -1);
+    else if (k === 'clear') state.pinBuffer = '';
+    else if (state.pinBuffer.length < 12) state.pinBuffer += k;
+    renderPinDots();
   });
+  $('pinSubmit').addEventListener('click', submitAdminPin);
 
   $('adminSubTabs').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-pane]');
