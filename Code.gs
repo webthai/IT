@@ -37,6 +37,7 @@ var DEFAULT_PIN = '05032540';
 var DEFAULT_LOGIN_USER = 'meen';
 var DEFAULT_LOGIN_PASS = '5340';
 var DEFAULT_BRANCHES = ['อโศก', 'ปิ่นเกล้า', 'อุดร'];
+var DEFAULT_ITEM_PIN_REQUIRED = 'true'; // ค่าเริ่มต้น: ต้องใส่ PIN ตอนเพิ่ม/ลบอุปกรณ์ (ปิดได้ที่ Admin > ตั้งค่า)
 
 var BASE_PREFIX = ['ID', 'สาขา', 'อาคาร', 'ชั้น', 'แผนก', 'ตำแหน่งย่อย'];
 var BASE_SUFFIX = ['สำรอง', 'หมายเหตุ', 'อัปเดตล่าสุด'];
@@ -97,6 +98,7 @@ function setupSheets() {
     cfgSheet.appendRow(['loginUser', DEFAULT_LOGIN_USER]);
     cfgSheet.appendRow(['loginPass', DEFAULT_LOGIN_PASS]);
     cfgSheet.appendRow(['branches', JSON.stringify(DEFAULT_BRANCHES)]);
+    cfgSheet.appendRow(['itemPinRequired', DEFAULT_ITEM_PIN_REQUIRED]);
     cfgSheet.setFrozenRows(1);
   }
 
@@ -185,7 +187,10 @@ function getConfig() {
       pin: String(map.pin || DEFAULT_PIN),
       loginUser: String(map.loginUser || DEFAULT_LOGIN_USER),
       loginPass: String(map.loginPass || DEFAULT_LOGIN_PASS),
-      branches: map.branches ? JSON.parse(map.branches) : DEFAULT_BRANCHES.slice()
+      branches: map.branches ? JSON.parse(map.branches) : DEFAULT_BRANCHES.slice(),
+      itemPinRequired: map.itemPinRequired === undefined
+        ? true
+        : (String(map.itemPinRequired) === 'true' || String(map.itemPinRequired) === 'TRUE')
     };
   });
 }
@@ -259,13 +264,21 @@ function doPost(e) {
 
     if (body.action === 'login') return jsonOut(checkLogin(body.user, body.pass));
 
+    // เพิ่ม/ลบอุปกรณ์ — ต้องใส่ PIN หรือไม่ ขึ้นกับ toggle itemPinRequired (คุมจากหน้า Admin)
+    if (body.action === 'save' || body.action === 'delete') {
+      var cfg = getConfig();
+      var pinSkipped = !cfg.itemPinRequired;
+      if (!pinSkipped && !checkPin(body.pin)) return jsonOut({ error: 'PIN ไม่ถูกต้อง' });
+      if (body.action === 'save') return jsonOut(saveRow(body.type, body.data, pinSkipped));
+      return jsonOut(deleteRow(body.type, body.id, pinSkipped));
+    }
+
+    // งาน Admin อื่นๆ ทั้งหมด (สาขา/ตั้งค่า/ประเภท/ฟิลด์) ต้องใส่ PIN เสมอ ไม่ว่า toggle ด้านบนจะเป็นอะไร
     if (!checkPin(body.pin)) return jsonOut({ error: 'PIN ไม่ถูกต้อง' });
 
     if (body.action === 'checkPin') return jsonOut({ ok: true });
-    if (body.action === 'save') return jsonOut(saveRow(body.type, body.data));
-    if (body.action === 'delete') return jsonOut(deleteRow(body.type, body.id));
     if (body.action === 'saveBranch') return jsonOut(saveBranch(body.mode, body.name, body.newName));
-    if (body.action === 'saveSettings') return jsonOut(saveSettings(body.newPin, body.newLoginUser, body.newLoginPass));
+    if (body.action === 'saveSettings') return jsonOut(saveSettings(body.newPin, body.newLoginUser, body.newLoginPass, body.itemPinRequired));
     if (body.action === 'saveSchemaType') return jsonOut(saveSchemaType(body.mode, body.key, body.label));
     if (body.action === 'saveSchemaField') return jsonOut(saveSchemaField(body.mode, body.typeKey, body.key, body.label, body.fieldType, body.options, body.showInTable));
     return jsonOut({ error: 'unknown action' });
@@ -322,6 +335,7 @@ function getAll() {
   types.forEach(function (t) { data[t.key] = cachedRows(t.key); });
   return {
     branches: cfg.branches,
+    itemPinRequired: cfg.itemPinRequired,
     schema: { types: types, fieldsByType: fieldsByType },
     data: data,
     updated: nowThai()
@@ -407,7 +421,7 @@ function getLogs(from, to, type, limit) {
 }
 
 // ---------- WRITE: แถวอุปกรณ์ ----------
-function saveRow(type, data) {
+function saveRow(type, data, pinSkipped) {
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
@@ -415,13 +429,14 @@ function saveRow(type, data) {
     var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
     var values = sheet.getDataRange().getValues();
     data['อัปเดตล่าสุด'] = nowThai();
+    var note = pinSkipped ? ' [ข้าม PIN]' : '';
 
     if (data['ID']) {
       for (var i = 1; i < values.length; i++) {
         if (values[i][0] === data['ID']) {
           var row = headers.map(function (h) { return data.hasOwnProperty(h) ? data[h] : values[i][headers.indexOf(h)]; });
           sheet.getRange(i + 1, 1, 1, headers.length).setValues([row]);
-          logAction('แก้ไข', type, data['ID'], data['แผนก'] || '');
+          logAction('แก้ไข', type, data['ID'], (data['แผนก'] || '') + note);
           clearCache(type);
           return { ok: true, id: data['ID'] };
         }
@@ -431,7 +446,7 @@ function saveRow(type, data) {
     data['ID'] = newId;
     var newRow = headers.map(function (h) { return data.hasOwnProperty(h) ? data[h] : ''; });
     sheet.appendRow(newRow);
-    logAction('เพิ่ม', type, newId, data['แผนก'] || '');
+    logAction('เพิ่ม', type, newId, (data['แผนก'] || '') + note);
     clearCache(type);
     return { ok: true, id: newId };
   } finally {
@@ -439,7 +454,7 @@ function saveRow(type, data) {
   }
 }
 
-function deleteRow(type, id) {
+function deleteRow(type, id, pinSkipped) {
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
@@ -448,7 +463,7 @@ function deleteRow(type, id) {
     for (var i = 1; i < values.length; i++) {
       if (values[i][0] === id) {
         sheet.deleteRow(i + 1);
-        logAction('ลบ', type, id, '');
+        logAction('ลบ', type, id, pinSkipped ? '[ข้าม PIN]' : '');
         clearCache(type);
         return { ok: true };
       }
@@ -492,11 +507,17 @@ function saveBranch(mode, name, newName) {
 }
 
 // ---------- ADMIN: PIN / login ----------
-function saveSettings(newPin, newLoginUser, newLoginPass) {
+function saveSettings(newPin, newLoginUser, newLoginPass, itemPinRequired) {
   if (newPin) setConfigValue('pin', String(newPin));
   if (newLoginUser) setConfigValue('loginUser', newLoginUser);
   if (newLoginPass) setConfigValue('loginPass', newLoginPass);
-  logAction('แก้ไขตั้งค่า', 'Config', '-', [newPin ? 'PIN' : '', newLoginUser ? 'loginUser' : '', newLoginPass ? 'loginPass' : ''].filter(Boolean).join(', '));
+  if (typeof itemPinRequired === 'boolean') setConfigValue('itemPinRequired', String(itemPinRequired));
+  logAction('แก้ไขตั้งค่า', 'Config', '-', [
+    newPin ? 'PIN' : '',
+    newLoginUser ? 'loginUser' : '',
+    newLoginPass ? 'loginPass' : '',
+    typeof itemPinRequired === 'boolean' ? ('itemPinRequired=' + itemPinRequired) : ''
+  ].filter(Boolean).join(', '));
   return { ok: true };
 }
 

@@ -32,6 +32,7 @@ const state = {
   pinLockUntil: 0,     // timestamp (ms) ที่จะปลดล็อก keypad ได้ — 0 = ไม่ได้ล็อกอยู่
   pinLockTimer: null,  // interval id สำหรับนับถอยหลังบนจอ
   branches: [],
+  itemPinRequired: true, // ต้องใส่ PIN ตอนเพิ่ม/ลบอุปกรณ์ไหม — ค่าจริงมาจาก bootstrap/cache, คุมได้ที่ Admin > ตั้งค่า
   schema: { types: [], fieldsByType: {} },
   db: {},
   updated: '',
@@ -78,14 +79,16 @@ async function loadAll(silent) {
     const json = await res.json();
     if (json.error) throw new Error(json.error);
     state.branches = json.branches || [];
+    state.itemPinRequired = json.itemPinRequired !== false;
     state.schema = json.schema || { types: [], fieldsByType: {} };
     state.db = json.data || {};
     state.updated = json.updated || '';
     if (!state.assetType && state.schema.types.length) state.assetType = state.schema.types[0].key;
     localStorage.setItem('it.db', JSON.stringify({
-      branches: state.branches, schema: state.schema, data: state.db, updated: state.updated
+      branches: state.branches, itemPinRequired: state.itemPinRequired, schema: state.schema, data: state.db, updated: state.updated
     }));
     renderAll();
+    applyItemPinUI();
     setStatus('ข้อมูลล่าสุด ' + state.updated, 'live');
   } catch (err) {
     setStatus(hasData()
@@ -103,6 +106,7 @@ function loadFromCache() {
     const c = JSON.parse(raw);
     if (!c || !c.data) return false;
     state.branches = c.branches || [];
+    state.itemPinRequired = c.itemPinRequired !== false;
     state.schema = c.schema || { types: [], fieldsByType: {} };
     state.db = c.data;
     state.updated = c.updated || '';
@@ -321,6 +325,14 @@ function closeForm() { $('formModal').classList.add('hidden'); state.editing = n
 function setFormBusy(busy) { $('btnSaveForm').disabled = busy; $('btnSaveForm').textContent = busy ? 'กำลังบันทึก...' : 'บันทึก'; }
 function showFormError(msg) { $('formError').textContent = msg; $('formError').classList.remove('hidden'); }
 
+// ซ่อน/แสดงช่อง PIN ในฟอร์มเพิ่ม/แก้ไขอุปกรณ์ ตาม toggle itemPinRequired (คุมจาก Admin > ตั้งค่า)
+function applyItemPinUI() {
+  const wrap = $('f_pin').closest('.f');
+  wrap.classList.toggle('hidden', !state.itemPinRequired);
+  if (state.itemPinRequired) $('f_pin').setAttribute('required', 'required');
+  else { $('f_pin').removeAttribute('required'); $('f_pin').value = ''; }
+}
+
 async function submitForm(e) {
   e.preventDefault();
   const cfg = typeCfg(state.assetType);
@@ -356,8 +368,13 @@ async function submitForm(e) {
 async function deleteCurrentItem() {
   if (!state.editing) return;
   const id = state.editing['ID'];
-  const pin = prompt('กรอกรหัส PIN เพื่อยืนยันการลบ');
-  if (pin === null) return;
+  let pin = '';
+  if (state.itemPinRequired) {
+    pin = prompt('กรอกรหัส PIN เพื่อยืนยันการลบ');
+    if (pin === null) return;
+  } else {
+    if (!confirm('ยืนยันลบรายการนี้?')) return;
+  }
 
   let res;
   try {
@@ -385,7 +402,7 @@ function applyLocal(data, id) {
 function persist() {
   state.updated = new Date().toLocaleString('th-TH');
   localStorage.setItem('it.db', JSON.stringify({
-    branches: state.branches, schema: state.schema, data: state.db, updated: state.updated
+    branches: state.branches, itemPinRequired: state.itemPinRequired, schema: state.schema, data: state.db, updated: state.updated
   }));
 }
 
@@ -531,11 +548,16 @@ function initAdmin() {
       pin: state.adminPin,
       newPin: $('s_pin').value.trim(),
       newLoginUser: $('s_user').value.trim(),
-      newLoginPass: $('s_pass').value.trim()
+      newLoginPass: $('s_pass').value.trim(),
+      itemPinRequired: $('s_itemPinRequired').checked
     });
     if (res.error) { $('settingsError').textContent = res.error; $('settingsError').classList.remove('hidden'); return; }
     if ($('s_pin').value.trim()) state.adminPin = $('s_pin').value.trim(); // ถ้าเพิ่งเปลี่ยน PIN ให้ session นี้ใช้ค่าใหม่ต่อได้เลย
+    state.itemPinRequired = $('s_itemPinRequired').checked;
+    persist();
+    applyItemPinUI();
     $('settingsForm').reset();
+    renderAdminSettings();
     showToast('บันทึกการตั้งค่าเรียบร้อย');
   });
 
@@ -559,8 +581,13 @@ function initAdmin() {
 
 function renderAdmin() {
   renderAdminBranches();
+  renderAdminSettings();
   renderLogTypeOptions();
   renderAdminSchema();
+}
+
+function renderAdminSettings() {
+  $('s_itemPinRequired').checked = state.itemPinRequired;
 }
 
 function renderAdminBranches() {
@@ -794,6 +821,7 @@ function initApp() {
   initTabs();
   initAssetTypeTabs();
   initAdmin();
+  applyItemPinUI();
 
   $('btnLogout').addEventListener('click', handleLogout);
   $('directorySearch').addEventListener('input', renderDirectory);
@@ -813,6 +841,7 @@ function initApp() {
 
   if (loadFromCache()) {
     renderAll();
+    applyItemPinUI();
     setStatus('แสดงข้อมูลที่บันทึกไว้ (' + state.updated + ') กำลังตรวจสอบข้อมูลใหม่…');
   }
   loadAll(true);
